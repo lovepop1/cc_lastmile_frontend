@@ -1,0 +1,265 @@
+PROMPT START
+Role: Senior Mobile Architect. Project: Build "LastMile" - A Ridesharing App. Platform: React Native (Expo Managed Workflow, SDK 50+). Languages: TypeScript, NativeWind (Tailwind CSS).
+
+1. Application Architecture
+This is a single-binary application that handles two distinct User Roles: Rider and Driver.
+
+Navigation: Use expo-router.
+
+State: Use Zustand for session and trip state.
+
+Networking: Use Axios.
+
+Maps: Use react-native-maps (Handle missing API keys gracefully by falling back to a simple View).
+
+Notifications: Use react-native-sse for Server-Sent Events.
+
+Configuration: Create config.ts.
+
+API_URL: Default to http://localhost:8000.
+
+Comment: "For Android Emulator use http://10.0.2.2:8000. For Physical Device use your PC LAN IP."
+
+2. Strict Type Definitions (The Contract)
+Constraint: The backend assumes snake_case for JSON keys. Do not use camelCase for API payloads.
+
+TypeScript
+
+export enum UserRole {
+  RIDER = "RIDER",
+  DRIVER = "DRIVER"
+}
+
+export enum TripStatus {
+  REQUESTED = "REQUESTED",
+  MATCHED = "MATCHED",
+  IN_PROGRESS = "IN_PROGRESS", // Rider is inside the vehicle
+  COMPLETED = "COMPLETED",
+  CANCELLED = "CANCELLED"
+}
+
+// 1=Hatchback, 2=Sedan, 3=SUV, 4=Luxury, 5=Van, 6=Auto
+export enum VehicleType {
+  HATCHBACK = 1,
+  SEDAN_AC = 2,
+  SUV = 3,
+  LUXURY = 4,
+  VAN = 5,
+  AUTO = 6
+}
+
+export enum DriverStatus {
+  ONLINE = "ONLINE", // Accepting matches
+  BUSY = "BUSY",     // Driving (Matches paused)
+  OFFLINE = "OFFLINE"
+}
+
+export interface User {
+  user_id: string;
+  name: string;
+  email: string;
+  phone?: string;
+  role: UserRole;
+}
+
+export interface Station {
+  id: string;
+  name: string;
+  lat: number;
+  lon: number;
+}
+
+export interface TripSummary {
+  trip_id: string;
+  rider_id: string;
+  drop_destination: string;
+  status: TripStatus;
+}
+3. API Service Layer (services/api.ts)
+Implement these exact endpoints using Axios.
+
+A. Auth & Identity
+Login: POST /auth/login
+
+Payload: { "email": "...", "password": "..." }
+
+Returns: { "token": "...", "user_id": "...", "role": "RIDER" }
+
+Register: POST /auth/register
+
+Payload: { "name": "...", "email": "...", "password": "...", "phone": "...", "role": "RIDER" }
+
+Returns: { "success": true, "user_id": "..." }
+
+Get User Profile: GET /user/{user_id}
+
+Returns: User object (name, phone, etc). Used to show Driver Name to Rider, or Rider Name to Driver.
+
+B. Static Data
+Get Stations: GET /stations
+
+Returns: Station[].
+
+C. Driver Operations
+Register Route: POST /driver/route
+
+Payload: { "driver_id": "...", "target_station_id": "...", "stops": ["StopA", "StopB"], "total_seats": 4, "vehicle_type": 3 }
+
+Update Location: POST /driver/location
+
+Payload: { "driver_id": "...", "latitude": 12.97, "longitude": 77.59 }
+
+Set Status: POST /driver/status
+
+Payload: { "driver_id": "...", "status": "BUSY" } (Use Enum values).
+
+Get Manifest: GET /driver/{driver_id}/trips
+
+Returns: TripSummary[] (List of active passengers).
+
+D. Rider Operations
+Request Ride: POST /ride/request
+
+Payload: { "rider_id": "...", "pickup_station_id": "...", "drop_destination": "...", "arrival_time": "ISO_STRING", "requested_vehicle_type": 3 }
+
+Returns: { "trip_id": "..." }
+
+Check Status: GET /ride/{trip_id}/status
+
+Returns: { "trip_id": "...", "status": "MATCHED", "driver_id": "..." }
+
+Cancel: POST /ride/{trip_id}/cancel
+
+Payload: {} (Empty JSON).
+
+Track Driver: GET /driver/{driver_id}/location
+
+Returns: { "latitude": ..., "longitude": ... }
+
+E. Transaction
+Complete Trip: POST /trip/{trip_id}/complete
+
+Payload: {}.
+
+4. Detailed Screen Flow & Logic
+Role Logic:
+On App Launch: Check AsyncStorage for token.
+
+If logged in as RIDER -> app/(rider).
+
+If logged in as DRIVER -> app/(driver).
+
+USER FLOW: RIDER (Theme: Emerald Green)
+Screen 1: Dashboard (app/(rider)/index.tsx)
+
+On Mount: Fetch Stations.
+
+UI: Full-screen Map.
+
+Form (Bottom Sheet):
+
+Pickup Station (Dropdown).
+
+Drop Location (Text).
+
+Vehicle Type (Horizontal Chips 1-6).
+
+Time (DateTime Picker).
+
+Action: "Request Ride".
+
+Calls POST /ride/request.
+
+Saves trip_id to Zustand.
+
+Navigates to Waiting Screen.
+
+Screen 2: Waiting (app/(rider)/waiting.tsx)
+
+UI: "Searching for Driver...".
+
+Logic 1 (Real-time): Connect EventSource to /notifications/stream/{user_id}. If message "MATCH FOUND", Navigate to Tracking.
+
+Logic 2 (Polling Backup): setInterval (3s) -> GET /ride/status. If MATCHED, Navigate to Tracking.
+
+Action: "Cancel Request" (Red Button) -> Calls /ride/cancel -> Go Home.
+
+Screen 3: Live Tracking (app/(rider)/tracking.tsx)
+
+Data: We have driver_id from the match response.
+
+Fetch Driver Name via GET /user/{driver_id}. Display "Driver: Ramesh".
+
+Map Logic:
+
+setInterval (3s) -> GET /driver/{driver_id}/location.
+
+Update Car Marker on Map.
+
+Status Logic:
+
+setInterval (3s) -> GET /ride/status.
+
+Condition: If status == COMPLETED, show "Ride Finished" Alert -> Go Home.
+
+Condition: If status == IN_PROGRESS, update UI to say "En Route".
+
+USER FLOW: DRIVER (Theme: Blue)
+Screen 1: Route Setup (app/(driver)/index.tsx)
+
+Form: Target Station, Stops (Text), Capacity (Int), Vehicle Type (Dropdown).
+
+Action: "Start Shift" -> Calls POST /driver/route -> Navigates to Console.
+
+Screen 2: Driver Console (app/(driver)/console.tsx)
+
+Init: Call POST /driver/status with {status: "ONLINE"}.
+
+The Passenger Manifest (Critical Logic):
+
+State: List of passengers.
+
+Polling: setInterval (3s) -> GET /driver/{id}/trips.
+
+Display: For each item in list, fetch Rider Name via GET /user/{rider_id}.
+
+Render: Card with "Rider Name", "Dest", and "Status".
+
+Action: Simulate Movement (Toggle):
+
+If ON, run loop calling POST /driver/location with changing Lat/Lon.
+
+Action: Start Ride (Main Button):
+
+Visible if: List > 0 AND Status == ONLINE.
+
+Click: Calls POST /driver/status with {status: "BUSY"}.
+
+Backend Effect: This triggers the backend to flip all riders to IN_PROGRESS.
+
+UI Update: Change Header to "In Transit".
+
+Action: Drop Off (Per Passenger):
+
+Visible: On each Passenger Card.
+
+Click: Calls POST /trip/{trip_id}/complete.
+
+UI Update: The Polling loop will run again, see the trip is gone/completed, and remove it from the list automatically.
+
+Action: End Shift:
+
+Visible if: List is empty.
+
+Click: Calls POST /driver/status {status: "OFFLINE"} -> Go to Setup.
+
+5. Visual Polish
+Use SafeAreaView.
+
+Use KeyboardAvoidingView.
+
+Use ActivityIndicator for loading states.
+
+Toasts: Use react-native-toast-message for "Match Found" alerts.
+
+PROMPT END

@@ -1,0 +1,103 @@
+USER FLOW: RIDER (Theme: Emerald Green)
+Screen 1: Dashboard (app/(rider)/index.tsx)
+
+On Mount: Fetch Stations.
+
+UI: Full-screen Map.
+
+Form (Bottom Sheet):
+
+Pickup Station (Dropdown).
+
+Drop Location (Text).
+
+Vehicle Type (Horizontal Chips 1-6).
+
+Time (DateTime Picker).
+
+Action: "Request Ride".
+
+Calls POST /ride/request.
+
+Saves trip_id to Zustand.
+
+Navigates to Waiting Screen.
+
+Screen 2: Waiting (app/(rider)/waiting.tsx)
+
+UI: "Searching for Driver...".
+
+Logic 1 (Real-time): Connect EventSource to /notifications/stream/{user_id}. If message "MATCH FOUND", Navigate to Tracking.
+
+Logic 2 (Polling Backup): setInterval (3s) -> GET /ride/status. If MATCHED, Navigate to Tracking.
+
+Action: "Cancel Request" (Red Button) -> Calls /ride/cancel -> Go Home.
+
+Screen 3: Live Tracking (app/(rider)/tracking.tsx)
+
+Data: We have driver_id from the match response.
+
+Fetch Driver Name via GET /user/{driver_id}. Display "Driver: Ramesh".
+
+Map Logic:
+
+setInterval (3s) -> GET /driver/{driver_id}/location.
+
+Update Car Marker on Map.
+
+Status Logic:
+
+setInterval (3s) -> GET /ride/status.
+
+Condition: If status == COMPLETED, show "Ride Finished" Alert -> Go Home.
+
+Condition: If status == IN_PROGRESS, update UI to say "En Route".
+
+USER FLOW: DRIVER (Theme: Blue)
+Screen 1: Route Setup (app/(driver)/index.tsx)
+
+Form: Target Station, Stops (Text), Capacity (Int), Vehicle Type (Dropdown).
+
+Action: "Start Shift" -> Calls POST /driver/route -> Navigates to Console.
+
+Screen 2: Driver Console (app/(driver)/console.tsx)
+
+Init: Call POST /driver/status with {status: "ONLINE"}.
+
+The Passenger Manifest (Critical Logic):
+
+State: List of passengers.
+
+Polling: setInterval (3s) -> GET /driver/{id}/trips.
+
+Display: For each item in list, fetch Rider Name via GET /user/{rider_id}.
+
+Render: Card with "Rider Name", "Dest", and "Status".
+
+Action: Simulate Movement (Toggle):
+
+If ON, run loop calling POST /driver/location with changing Lat/Lon.
+
+Action: Start Ride (Main Button):
+
+Visible if: List > 0 AND Status == ONLINE.
+
+Click: Calls POST /driver/status with {status: "BUSY"}.
+
+Backend Effect: This triggers the backend to flip all riders to IN_PROGRESS.
+
+UI Update: Change Header to "In Transit".
+
+Action: Drop Off (Per Passenger):
+
+Visible: On each Passenger Card.
+
+Click: Calls POST /trip/{trip_id}/complete.
+
+UI Update: The Polling loop will run again, see the trip is gone/completed, and remove it from the list automatically.
+
+Action: End Shift:
+
+Visible if: List is empty.
+
+Click: Calls POST /driver/status {status: "OFFLINE"} -> Go to Setup.

@@ -1,0 +1,1 @@
+export const API_URL = "http://IP_ADDRESS:PORT_NUMBER";
